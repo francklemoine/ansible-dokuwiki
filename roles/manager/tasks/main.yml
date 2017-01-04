@@ -1,0 +1,309 @@
+---
+
+- assert:
+    that:
+      - 'project_name        != ""'
+      - 'backup_image        != ""'
+  tags:
+    - all
+
+
+- assert:
+    that:
+      - 'httpd_prefix        != ""'
+      - 'httpd_container     != ""'
+  tags:
+    - httpd_configure
+
+
+- assert:
+    that:
+      - 'doku_container      != ""'
+      - 'doku_install_dir    != ""'
+      - 'doku_backup_dir     != ""'
+      - 'doku_archive_prefix != ""'
+      - 'dlst_container      != ""'
+      - 'dlst_install_dir    != ""'
+      - 'dlst_backup_dir     != ""'
+      - 'dlst_archive_prefix != ""'
+  tags:
+    - doku_install_php
+    - doku_import_all
+    - doku_import_datas
+    - doku_export
+    - dlst_import
+    - dlst_export
+
+
+
+- name: pull image
+  docker_image:
+    name: "{{ backup_image }}"
+    tag: latest
+    state: present
+  tags: all
+
+
+################################################################################
+########## HTTPD
+################################################################################
+- name: copy httpd files (conf)
+  template:
+    src: "../templates/{{ item }}"
+    dest: "/tmp/{{ item }}"
+  with_items:
+    - "{{ httpd_conf_files }}"
+  tags:
+    - httpd_configure
+
+
+- name: configure httpd (conf)
+  command: "docker cp /tmp/{{ item }} {{ httpd_container }}:{{ httpd_prefix }}/conf-enabled"
+  with_items:
+    - "{{ httpd_conf_files }}"
+  tags:
+    - httpd_configure
+
+
+- name: remove httpd files (conf)
+  file:
+    path: "/tmp/{{ item }}"
+    state: absent
+  with_items:
+    - "{{ httpd_conf_files }}"
+  tags:
+    - httpd_configure
+
+
+- name: copy httpd files (extra)
+  template:
+    src: "../templates/{{ item }}"
+    dest: "/tmp/{{ item }}"
+  with_items:
+    - "{{ httpd_extra_files }}"
+  tags:
+    - httpd_configure
+
+
+- name: configure httpd (extra)
+  command: "docker cp /tmp/{{ item }} {{ httpd_container }}:{{ httpd_prefix }}/conf/extra"
+  with_items:
+    - "{{ httpd_extra_files }}"
+  tags:
+    - httpd_configure
+
+
+- name: remove httpd files (extra)
+  file:
+    path: "/tmp/{{ item }}"
+    state: absent
+  with_items:
+    - "{{ httpd_extra_files }}"
+  tags:
+    - httpd_configure
+
+
+- name: restart httpd service
+  service:
+    name: "{{ project_name }}"
+    state: restarted
+  tags:
+    - httpd_configure
+
+
+################################################################################
+########## DOKUWIKI
+################################################################################
+- name: rename install.php file after dokuwiki configuration
+  command: "docker exec {{ doku_container }} /bin/bash -c \"mv {{doku_install_dir }}/install.php {{doku_install_dir }}/install.php.ori\""
+  tags:
+    - doku_install_php
+
+
+- name: dokuwiki import (copy tar.gz file)
+  copy:
+    src: "../files/{{ doku_archive_prefix }}.tar.gz"
+    dest: "/tmp/{{ doku_archive_prefix }}.tar.gz"
+    owner: "{{ ansible_ssh_user }}"
+    group: "{{ ansible_ssh_user }}"
+    mode: 0644
+  tags:
+    - doku_import_all
+    - doku_import_datas
+
+
+- name: dokuwiki import all (remove directories)
+  ignore_errors: yes
+  # ignore_errors -> there are errors because of exposed volumes
+  command: "docker exec {{ doku_container }} find {{ doku_install_dir }} -mindepth 1 -delete"
+  tags:
+    - doku_import_all
+
+
+- name: dokuwiki import all
+  command: "docker run --rm --volumes-from {{ doku_container }} -v /tmp:/backup {{ backup_image }} tar -xzf /backup/{{ doku_archive_prefix }}.tar.gz -C {{ doku_install_dir }} ."
+  tags:
+    - doku_import_all
+
+
+- name: dokuwiki import datas (remove directories)
+  command: "docker exec {{ doku_container }} rm -fR {{ doku_install_dir }}/{{ item }}"
+  with_items:
+    - "data/pages"
+    - "data/meta"
+    - "data/media"
+    - "data/media_meta"
+    - "data/attic"
+    - "data/media_attic"
+  tags:
+    - doku_import_datas
+
+
+- name: dokuwiki import datas
+  command: "docker run --rm --volumes-from {{ doku_container }} -v /tmp:/backup {{ backup_image }} tar -xzf /backup/{{ doku_archive_prefix }}.tar.gz -C {{ doku_install_dir }} ./{{ item }}"
+  with_items:
+    - "data/pages"
+    - "data/meta"
+    - "data/media"
+    - "data/media_meta"
+    - "data/attic"
+    - "data/media_attic"
+  tags:
+    - doku_import_datas
+
+
+- name: dokuwiki import (update ownership)
+  command: "docker exec {{ doku_container }} chown -R www-data:www-data {{ doku_install_dir }}"
+  tags:
+    - doku_import_all
+    - doku_import_datas
+
+
+- name: dokuwiki import (remove source archive)
+  file:
+    path: "/tmp/{{ doku_archive_prefix }}.tar.gz"
+    state: absent
+  tags:
+    - doku_import_all
+    - doku_import_datas
+
+
+- name: dokuwiki export - create backup directory
+  file:
+    path: "{{ doku_backup_dir }}"
+    state: directory
+    owner: "root"
+    group: "root"
+    mode: 0755
+    recurse: yes
+  tags:
+    - doku_export
+
+
+- name: dokuwiki export (suffix)
+  action: shell date +%Y%m%d%H%M%S
+  register: current_date
+  tags:
+    - doku_export
+
+
+- name: dokuwiki export
+  command: "docker run --rm --volumes-from {{ doku_container }} -v {{ doku_backup_dir }}:/backup {{ backup_image }} tar -czf /backup/{{ doku_archive_prefix }}_{{ current_date.stdout }}.tar.gz -C {{ doku_install_dir }} ."
+  tags:
+    - doku_export
+
+
+- name: dokuwiki export (fetch tar.gz file)
+  fetch:
+    src: "{{ doku_backup_dir }}/{{ doku_archive_prefix }}_{{ current_date.stdout }}.tar.gz"
+    dest: "/tmp"
+    mode: 0644
+  tags:
+    - doku_export
+
+
+################################################################################
+########## DIRECTORY LIST
+################################################################################
+- name: directory list import (copy tar.gz file)
+  copy:
+    src: "../files/{{ dlst_archive_prefix }}.tar.gz"
+    dest: "/tmp/{{ dlst_archive_prefix }}.tar.gz"
+    owner: "{{ ansible_ssh_user }}"
+    group: "{{ ansible_ssh_user }}"
+    mode: 0644
+  tags:
+    - dlst_import
+
+
+- name: directory list import (create install directory)
+  command: "docker exec {{ dlst_container }} mkdir {{ dlst_install_dir }}"
+  tags:
+    - dlst_import
+
+
+- name: directory list import (chown install directory)
+  command: "docker exec {{ dlst_container }} chown www-data {{ dlst_install_dir }}"
+  tags:
+    - dlst_import
+
+
+- name: directory list import (remove)
+  command: "docker exec {{ dlst_container }} find {{ dlst_install_dir }} -mindepth 1 -delete"
+  tags:
+    - dlst_import
+
+
+- name: directory list import
+  command: "docker run --rm --volumes-from {{ dlst_container }} -v /tmp:/backup {{ backup_image }} tar -xzf /backup/{{ dlst_archive_prefix }}.tar.gz -C {{ dlst_install_dir }} ."
+  tags:
+    - dlst_import
+
+
+- name: directory list import (update ownership)
+  command: "docker exec {{ dlst_container }} chown -R www-data:www-data {{ dlst_install_dir }}"
+  tags:
+    - dlst_import
+
+
+- name: directory list import (remove source archive)
+  file:
+    path: "/tmp/{{ dlst_archive_prefix }}.tar.gz"
+    state: absent
+  tags:
+    - dlst_import
+
+
+- name: directory list export (create backup directory)
+  file:
+    path: "{{ dlst_backup_dir }}"
+    state: directory
+    owner: "root"
+    group: "root"
+    mode: 0755
+    recurse: yes
+  tags:
+    - dlst_export
+
+
+- name: directory list export (suffix)
+  action: shell date +%Y%m%d%H%M%S
+  register: current_date
+  tags:
+    - dlst_export
+
+
+- name: directory list export
+  command: "docker run --rm --volumes-from {{ dlst_container }} -v {{ dlst_backup_dir }}:/backup {{ backup_image }} tar -czf /backup/{{ dlst_archive_prefix }}_{{ current_date.stdout }}.tar.gz -C {{ dlst_install_dir }} ."
+  tags:
+    - dlst_export
+
+
+- name: directory list export (fetch tar.gz file)
+  fetch:
+    src: "{{ dlst_backup_dir }}/{{ dlst_archive_prefix }}_{{ current_date.stdout }}.tar.gz"
+    dest: "/tmp"
+    mode: 0644
+  become: no      # to avoid 'MemoryError'
+  tags:
+    - dlst_export

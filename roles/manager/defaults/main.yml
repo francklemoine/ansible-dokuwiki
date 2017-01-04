@@ -1,0 +1,20 @@
+---
+# default
+#
+project_name: webstack10
+backup_image: "debian:jessie"
+#
+doku_container: dokuwiki_phpfpm
+doku_install_dir: /opt/www/dokuwiki
+doku_backup_dir: /backup
+doku_archive_prefix: dokuwiki
+dlst_container: dokuwiki_phpfpm
+dlst_install_dir: /opt/www/dlist
+dlst_backup_dir: /backup
+dlst_archive_prefix: dlist
+#
+httpd_container: dokuwiki_httpd
+httpd_prefix: /usr/local/apache2
+httpd_conf_files: [ '001-httpd-vhosts-dokuwiki.conf' ]
+httpd_extra_files: []
+#

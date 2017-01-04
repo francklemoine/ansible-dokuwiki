@@ -1,0 +1,18 @@
+---
+
+# tags:
+#   doku_install_php:      dokuwiki -> rename install.php (post config)
+#   doku_import_all:       dokuwiki -> import from archive tar.gz (all tree)
+#   doku_import_datas:     dokuwiki -> import from archive tar.gz (datas only)
+#   doku_export:           dokuwiki -> export
+#
+#   dlst_import:           directory list -> import from archive tar.gz
+#   dlst_export:           directory list -> export
+#
+#   httpd_configure:       httpd -> configure web server
+
+
+- name: webstack10 (dokuwiki configuration)
+  hosts: webstack10
+  roles:
+    - manager
